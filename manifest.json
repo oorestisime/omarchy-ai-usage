@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "oorestisime.ai-usage",
+  "name": "AI Usage",
+  "version": "0.1.0",
+  "author": "Orestis",
+  "license": "MIT",
+  "description": "Multi-account ChatGPT usage, Codex limits, and OpenCode Go quotas.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "AI Usage",
+    "description": "Show account-wide ChatGPT activity, Codex limits, and OpenCode Go quotas.",
+    "category": "AI",
+    "aliases": ["ai-usage", "usage"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 900,
+      "showOpenCodeGo": true
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 300,
+        "max": 3600,
+        "step": 300,
+        "defaultValue": 900
+      },
+      {
+        "key": "showOpenCodeGo",
+        "type": "boolean",
+        "label": "Show OpenCode Go limits",
+        "defaultValue": true
+      }
+    ]
+  }
+}

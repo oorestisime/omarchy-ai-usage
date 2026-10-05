@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+label="${1:-}"
+if [[ -z "$label" || "$label" == */* || "$label" == .* ]]; then
+  echo "Usage: $0 LABEL" >&2
+  echo "LABEL must be a simple directory name, such as opencode." >&2
+  exit 2
+fi
+
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+account_home="$data_home/ai-usage/accounts/$label"
+mkdir -p "$account_home"
+chmod 700 "$account_home"
+
+echo "Signing in '$label' without changing the account in ~/.codex."
+echo "This account can be the same ChatGPT account used by OpenCode or T3 Code."
+CODEX_HOME="$account_home" codex login
