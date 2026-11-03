@@ -1,16 +1,18 @@
 # AI Usage for Omarchy
 
 An unofficial Omarchy bar widget for account-wide ChatGPT activity, Codex rate
-limits, and OpenCode Go quotas.
+limits, Claude subscription limits, and OpenCode Go quotas.
 
 ## Features
 
 - Discovers the current Codex login, Omarchy's Codex account registry, and
   additional isolated Codex homes.
-- Keeps subscription limits and lifetime totals separate by ChatGPT account.
+- Shows ChatGPT, Claude, and OpenCode Go limits in one consistent source grid.
 - Supports any number of accounts with consistent, theme-derived colors.
-- Shows stacked totals for the latest seven days and seven seven-day periods.
-- Optionally shows OpenCode Go rolling, weekly, and monthly limits.
+- Shows combined ChatGPT, Claude, and OpenCode Go totals for the latest seven
+  days and seven seven-day periods.
+- Optionally shows Claude five-hour and weekly subscription limits, plus OpenCode
+  Go rolling and weekly limits.
 - Uses the active Omarchy theme and refreshes every 15 minutes by default.
 
 ## Install
@@ -20,8 +22,8 @@ omarchy plugin add https://github.com/oorestisime/omarchy-ai-usage --enable
 ```
 
 The plugin requires Python 3 and the Codex CLI. Your primary ChatGPT account
-should already be signed in through Codex. OpenCode Go support is optional and
-is enabled only when its existing login is found.
+should already be signed in through Codex. Claude and OpenCode Go support are
+optional and are enabled only when their existing logins are found.
 
 Click the robot icon to open the panel. Middle-click the icon, press `R` in the
 panel, or use the refresh button to update immediately.
@@ -63,16 +65,31 @@ bucket can lag behind the current day, and different accounts can expose
 different history lengths. The seven-week view is calculated locally from those
 daily buckets.
 
-OpenCode Go limits come from its usage service using the existing credential in
-`~/.local/share/opencode/auth.json`; its credential layout and endpoint may also
-change independently.
+Claude limits come from the usage service used by Claude Code, using its
+existing local OAuth login. The last normalized Claude result is cached for up
+to 24 hours so a temporary usage-service rate limit does not blank the panel.
+OpenCode Go limits come from OpenCode v2's local usage API, which keeps
+credential handling inside OpenCode. A legacy OpenCode Go API key is supported
+as a fallback.
+
+Claude's token history is calculated from usage metadata in local Claude Code
+history and deduplicated by response ID. OpenCode Go history is aggregated from
+indexed metadata in OpenCode's local database and includes only models routed
+through the `opencode` provider. These sources describe activity on this
+machine; unlike ChatGPT's service buckets, they are not account-wide.
 
 ## Privacy
 
-- Does not read prompts, responses, transcripts, or OpenCode session databases.
+- Never returns or stores prompts, responses, or transcript content. Claude
+  history files are scanned locally for timestamps, response IDs, and token
+  counts only.
+- Queries only timestamps, provider IDs, and token counts from OpenCode's local
+  database; message content is never selected.
 - Invokes Codex app-server separately for each configured Codex home.
 - Never includes raw account IDs or credentials in collector output.
-- Sends the OpenCode Go credential only to OpenCode's own usage endpoint.
+- Sends Claude's OAuth credential only to Anthropic's own usage endpoint.
+- Leaves OpenCode v2 credential handling to the OpenCode CLI; the legacy Go
+  credential fallback is sent only to OpenCode's own usage endpoint.
 
 ## Development
 

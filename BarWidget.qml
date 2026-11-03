@@ -14,7 +14,9 @@ BarWidget {
   property string lastError: ""
   property string outputText: ""
   property string errorText: ""
+  property double lastRefreshStartedAt: 0
   readonly property int refreshIntervalSec: Math.max(300, Math.min(3600, parseInt(String(setting("refreshIntervalSec", 900)), 10) || 900))
+  readonly property bool showClaude: setting("showClaude", true) !== false
   readonly property bool showOpenCodeGo: setting("showOpenCodeGo", true) !== false
   readonly property var latestDay: Model.latestDay(snapshot)
   readonly property string displayText: latestDay ? Model.formatTokens(latestDay.tokens) : "—"
@@ -23,13 +25,16 @@ BarWidget {
     return decodeURIComponent(String(url).replace("file://", ""))
   }
 
-  function refresh() {
+  function refresh(force) {
     if (collector.running) return
+    if (!force && Date.now() - root.lastRefreshStartedAt < 60000) return
     root.outputText = ""
     root.errorText = ""
     root.lastError = ""
     root.refreshing = true
+    root.lastRefreshStartedAt = Date.now()
     var command = ["python3", localPath(Qt.resolvedUrl("scripts/collect.py"))]
+    if (!root.showClaude) command.push("--no-claude")
     if (!root.showOpenCodeGo) command.push("--no-opencode-go")
     collector.command = command
     collector.running = true
@@ -113,7 +118,7 @@ BarWidget {
         ? "AI usage · " + root.snapshot.accounts.length + (root.snapshot.accounts.length === 1 ? " account · " : " accounts · ") + root.displayText + " total on " + Model.dayLabel(root.latestDay.startDate)
         : "Loading AI usage"
     onPressed: function(b) {
-      if (b === Qt.MiddleButton) root.refresh()
+      if (b === Qt.MiddleButton) root.refresh(true)
       else root.togglePanel()
     }
   }

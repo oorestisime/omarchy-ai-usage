@@ -6,6 +6,7 @@ function emptySnapshot() {
     accounts: [],
     combinedDailyUsage: [],
     summary: {},
+    claude: null,
     openCodeGo: null,
     updatedAt: ""
   }
@@ -64,6 +65,79 @@ function accountMeta(account) {
   return lifetime > 0 ? formatTokens(lifetime) + " lifetime" : ""
 }
 
+function titleCase(value) {
+  var text = String(value || "")
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : ""
+}
+
+function limitSources(snapshot) {
+  var result = []
+  var accounts = snapshot && snapshot.accounts instanceof Array ? snapshot.accounts : []
+  for (var i = 0; i < accounts.length; i++) {
+    var account = accounts[i]
+    result.push({
+      id: accountId(account, i),
+      name: accountName(account),
+      meta: accountMeta(account),
+      available: account.available === true,
+      limits: account.limits instanceof Array ? account.limits : [],
+      error: String(account.error || ""),
+      resetCredits: number(account.resetCredits),
+      dailyUsage: account.dailyUsage instanceof Array ? account.dailyUsage : [],
+      dailyUsageAvailable: account.available === true,
+      dailyUsageError: "",
+      accountWide: true
+    })
+  }
+  if (snapshot && snapshot.claude !== null && snapshot.claude !== undefined) {
+    var claudeDays = snapshot.claude.dailyUsage instanceof Array ? snapshot.claude.dailyUsage : []
+    result.push({
+      id: "claude",
+      name: "Claude",
+      meta: titleCase(snapshot.claude.plan) + " · local · " + formatTokens(recentUsageTotal(claudeDays, snapshot, 7)) + " / 7d"
+        + (snapshot.claude.cached ? " · cached" : ""),
+      available: snapshot.claude.available === true,
+      limits: snapshot.claude.limits instanceof Array ? snapshot.claude.limits : [],
+      error: String(snapshot.claude.error || ""),
+      resetCredits: 0,
+      dailyUsage: claudeDays,
+      dailyUsageAvailable: snapshot.claude.dailyUsageAvailable === true,
+      dailyUsageError: String(snapshot.claude.dailyUsageError || ""),
+      accountWide: false
+    })
+  }
+  if (snapshot && snapshot.openCodeGo !== null && snapshot.openCodeGo !== undefined) {
+    var goDays = snapshot.openCodeGo.dailyUsage instanceof Array ? snapshot.openCodeGo.dailyUsage : []
+    result.push({
+      id: "opencode-go",
+      name: "OpenCode Go",
+      meta: "Local · " + formatTokens(recentUsageTotal(goDays, snapshot, 7)) + " / 7d",
+      available: snapshot.openCodeGo.available === true,
+      limits: snapshot.openCodeGo.limits instanceof Array ? snapshot.openCodeGo.limits : [],
+      error: String(snapshot.openCodeGo.error || ""),
+      resetCredits: 0,
+      dailyUsage: goDays,
+      dailyUsageAvailable: snapshot.openCodeGo.dailyUsageAvailable === true,
+      dailyUsageError: String(snapshot.openCodeGo.dailyUsageError || ""),
+      accountWide: false
+    })
+  }
+  return result
+}
+
+function chatgptSources(snapshot) {
+  var count = snapshot && snapshot.accounts instanceof Array ? snapshot.accounts.length : 0
+  return limitSources(snapshot).slice(0, count)
+}
+
+function sourceById(snapshot, identity) {
+  var sources = limitSources(snapshot)
+  for (var i = 0; i < sources.length; i++) {
+    if (String(sources[i].id) === String(identity)) return sources[i]
+  }
+  return null
+}
+
 function shortAccountName(account) {
   var name = accountName(account)
   var at = name.indexOf("@")
@@ -76,6 +150,16 @@ function tokensForDay(account, isoDate) {
     if (String(days[i].startDate) === String(isoDate)) return number(days[i].tokens)
   }
   return null
+}
+
+function latestUsageDate(source) {
+  var days = source && source.dailyUsage instanceof Array ? source.dailyUsage : []
+  var latest = ""
+  for (var i = 0; i < days.length; i++) {
+    var value = String(days[i].startDate || "")
+    if (value > latest) latest = value
+  }
+  return latest
 }
 
 function formatOptionalTokens(value) {
@@ -104,35 +188,51 @@ function dateKey(date) {
     + String(date.getDate()).padStart(2, "0")
 }
 
-function dailyRows(snapshot, count) {
-  var combined = snapshot && snapshot.combinedDailyUsage instanceof Array
-    ? snapshot.combinedDailyUsage.slice(0)
-    : []
-  if (!combined.length) return []
-  combined.sort(function(a, b) { return String(a.startDate).localeCompare(String(b.startDate)) })
-  var end = parseDay(combined[combined.length - 1].startDate)
-  if (!end) return []
-  var accounts = snapshot && snapshot.accounts instanceof Array ? snapshot.accounts : []
+function snapshotDay(snapshot) {
+  var timestamp = Date.parse(String(snapshot && snapshot.updatedAt || ""))
+  return isFinite(timestamp) ? new Date(timestamp) : new Date()
+}
+
+function recentUsageTotal(days, snapshot, count) {
+  var end = snapshotDay(snapshot)
+  var total = 0
+  for (var offset = 0; offset < Math.max(1, count); offset++) {
+    var date = new Date(end.getFullYear(), end.getMonth(), end.getDate() - offset)
+    var value = tokensForDay({ dailyUsage: days }, dateKey(date))
+    total += value === null ? 0 : number(value)
+  }
+  return total
+}
+
+function dailyRowsForSources(snapshot, sources, count) {
+  if (!(sources instanceof Array) || !sources.length) return []
+  var end = snapshotDay(snapshot)
   var rows = []
   for (var offset = Math.max(1, count) - 1; offset >= 0; offset--) {
     var date = new Date(end.getFullYear(), end.getMonth(), end.getDate() - offset)
     var key = dateKey(date)
     var segments = []
     var total = 0
-    for (var i = 0; i < accounts.length; i++) {
-      var value = tokensForDay(accounts[i], key)
+    var incomplete = false
+    for (var i = 0; i < sources.length; i++) {
+      var value = tokensForDay(sources[i], key)
+      if (sources[i].accountWide && value === null && key > latestUsageDate(sources[i])) incomplete = true
       var tokens = value === null ? 0 : number(value)
-      segments.push({ accountId: accountId(accounts[i], i), tokens: tokens })
+      segments.push({ accountId: String(sources[i].id), tokens: tokens })
       total += tokens
     }
-    rows.push({ startDate: key, endDate: key, tokens: total, segments: segments })
+    rows.push({ startDate: key, endDate: key, tokens: total, segments: segments, incomplete: incomplete })
   }
   return rows
 }
 
-function weeklyRows(snapshot, count) {
+function dailyRows(snapshot, count) {
+  return dailyRowsForSources(snapshot, chatgptSources(snapshot), count)
+}
+
+function weeklyRowsForSources(snapshot, sources, count) {
   var weeks = Math.max(1, count)
-  var days = dailyRows(snapshot, weeks * 7)
+  var days = dailyRowsForSources(snapshot, sources, weeks * 7)
   if (!days.length) return []
   var rows = []
   for (var week = 0; week < weeks; week++) {
@@ -141,8 +241,10 @@ function weeklyRows(snapshot, count) {
     var segmentTotals = {}
     var segmentOrder = []
     var total = 0
+    var incomplete = false
     for (var day = week * 7; day < week * 7 + 7; day++) {
       total += number(days[day].tokens)
+      if (days[day].incomplete) incomplete = true
       for (var segment = 0; segment < days[day].segments.length; segment++) {
         var entry = days[day].segments[segment]
         var identity = String(entry.accountId)
@@ -162,10 +264,43 @@ function weeklyRows(snapshot, count) {
       startDate: first.startDate,
       endDate: last.endDate,
       tokens: total,
-      segments: segments
+      segments: segments,
+      incomplete: incomplete
     })
   }
   return rows
+}
+
+function weeklyRows(snapshot, count) {
+  return weeklyRowsForSources(snapshot, chatgptSources(snapshot), count)
+}
+
+function usageViews(snapshot) {
+  var result = []
+  var all = limitSources(snapshot)
+  var histories = []
+  for (var sourceIndex = 0; sourceIndex < all.length; sourceIndex++) {
+    if (all[sourceIndex].dailyUsageAvailable) histories.push(all[sourceIndex])
+  }
+  if (histories.length) {
+    result.push({
+      id: "all-days",
+      title: "ALL SOURCES · 7 DAYS",
+      rows: dailyRowsForSources(snapshot, histories, 7),
+      rangeLabels: false,
+      error: ""
+    })
+  }
+  if (histories.length) {
+    result.push({
+      id: "all-weeks",
+      title: "ALL SOURCES · 7 WEEKS",
+      rows: weeklyRowsForSources(snapshot, histories, 7),
+      rangeLabels: true,
+      error: ""
+    })
+  }
+  return result
 }
 
 function peakTokens(rows) {
@@ -178,6 +313,13 @@ function totalTokens(rows) {
   var total = 0
   for (var i = 0; i < rows.length; i++) total += number(rows[i].tokens)
   return total
+}
+
+function hasIncomplete(rows) {
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].incomplete) return true
+  }
+  return false
 }
 
 function compactDayLabel(isoDate) {

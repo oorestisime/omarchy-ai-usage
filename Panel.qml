@@ -18,11 +18,10 @@ Panel {
 
   readonly property var barIdentity: hostWidget || root
   readonly property var snapshot: usage ? usage.snapshot : Model.emptySnapshot()
-  readonly property var weekRows: Model.dailyRows(snapshot, 7)
-  readonly property var sevenWeekRows: Model.weeklyRows(snapshot, 7)
-  readonly property real weekPeak: Model.peakTokens(weekRows)
-  readonly property real sevenWeekPeak: Model.peakTokens(sevenWeekRows)
+  readonly property var sources: Model.limitSources(snapshot)
+  readonly property var usageViews: Model.usageViews(snapshot)
   readonly property int accountCount: snapshot.accounts.length
+  readonly property int sourceCount: sources.length
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.62)
   readonly property color faint: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.10)
@@ -30,7 +29,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
   property var themeSeriesColors: []
-  readonly property var accountColors: buildAccountColors(snapshot.accounts)
+  readonly property var sourceColors: buildSourceColors(sources)
 
   function generatedSeriesColor(index) {
     var hue = Color.accent.hslHue
@@ -55,20 +54,28 @@ Panel {
     themeSeriesColors = colors
   }
 
-  function buildAccountColors(accounts) {
+  function buildSourceColors(sources) {
     var result = {}
-    var rows = accounts instanceof Array ? accounts : []
+    var rows = sources instanceof Array ? sources : []
+    var accountIndex = 0
     for (var i = 0; i < rows.length; i++) {
-      var identity = Model.accountId(rows[i], i)
-      result[identity] = i === 0
-        ? Color.accent
-        : (themeSeriesColors[i - 1] || generatedSeriesColor(i - 1))
+      var identity = String(rows[i].id || "source-" + i)
+      if (identity === "claude") {
+        result[identity] = themeSeriesColors[4] || generatedSeriesColor(4)
+      } else if (identity === "opencode-go") {
+        result[identity] = themeSeriesColors[1] || generatedSeriesColor(1)
+      } else {
+        result[identity] = accountIndex === 0
+          ? Color.accent
+          : (themeSeriesColors[accountIndex - 1] || generatedSeriesColor(accountIndex - 1))
+        accountIndex++
+      }
     }
     return result
   }
 
-  function accountColor(identity) {
-    return accountColors[String(identity)] || Color.accent
+  function sourceColor(identity) {
+    return sourceColors[String(identity)] || Color.accent
   }
 
   FileView {
@@ -115,11 +122,11 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      onActivateRequested: if (root.usage) root.usage.refresh()
+      onActivateRequested: if (root.usage) root.usage.refresh(true)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
-        if ((text === "r" || text === "R") && root.usage) root.usage.refresh()
+        if ((text === "r" || text === "R") && root.usage) root.usage.refresh(true)
       }
 
       Flickable {
@@ -145,7 +152,7 @@ Panel {
               anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
               title: "AI usage"
-              meta: root.accountCount + (root.accountCount === 1 ? " account" : " accounts")
+              meta: root.sourceCount + (root.sourceCount === 1 ? " source" : " sources")
               detail: ""
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -160,7 +167,7 @@ Panel {
               foreground: root.foreground
               fontFamily: root.fontFamily
               enabled: root.usage && !root.usage.refreshing
-              onClicked: root.usage.refresh()
+              onClicked: root.usage.refresh(true)
             }
           }
 
@@ -175,104 +182,23 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          SectionLabel { text: "ACCOUNT LIMITS" }
+          SectionLabel { text: "SUBSCRIPTION LIMITS" }
 
           Grid {
             id: accountGrid
             width: parent.width
-            columns: Math.min(2, Math.max(1, root.accountCount))
+            columns: Math.min(2, Math.max(1, root.sourceCount))
             columnSpacing: Style.space(10)
             rowSpacing: Style.space(10)
 
             Repeater {
-              model: root.snapshot.accounts
-
-              BorderSurface {
+              model: root.sources
+              SubscriptionCard {
                 required property var modelData
                 required property int index
                 width: (accountGrid.width - accountGrid.columnSpacing * (accountGrid.columns - 1)) / accountGrid.columns
-                implicitHeight: accountCard.implicitHeight + Style.space(24)
-                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.035)
-                radius: Style.cornerRadius
-                borderSpec: Border.flat(root.faint, 1)
-
-                Column {
-                  id: accountCard
-                  readonly property string accountIdentity: Model.accountId(parent.modelData, parent.index)
-                  readonly property color seriesColor: root.accountColor(accountIdentity)
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.leftMargin: Style.space(12)
-                  anchors.rightMargin: Style.space(12)
-                  spacing: Style.space(6)
-
-                  Item {
-                    id: accountHeader
-                    readonly property var account: accountCard.parent.modelData
-                    width: parent.width
-                    implicitHeight: Math.max(accountName.implicitHeight, accountMeta.implicitHeight)
-
-                    Text {
-                      id: accountName
-                      anchors.left: parent.left
-                      anchors.right: accountMeta.left
-                      anchors.rightMargin: Style.space(7)
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: Model.accountName(accountHeader.account)
-                      textFormat: Text.PlainText
-                      color: accountCard.seriesColor
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      font.bold: true
-                      elide: Text.ElideRight
-                    }
-
-                    Text {
-                      id: accountMeta
-                      anchors.right: parent.right
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: Model.accountMeta(accountHeader.account)
-                      textFormat: Text.PlainText
-                      color: root.dim
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-
-                  Text {
-                    visible: !parent.parent.modelData.available
-                    width: parent.width
-                    text: parent.parent.modelData.error || "Usage unavailable"
-                    textFormat: Text.PlainText
-                    color: root.urgent
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    wrapMode: Text.WordWrap
-                  }
-
-                  Repeater {
-                    model: parent.parent.modelData.limits || []
-                    LimitRow {
-                      required property var modelData
-                      width: accountCard.width
-                      label: modelData.label
-                      percent: modelData.percent
-                      resetsAt: modelData.resetsAt
-                      accentColor: accountCard.seriesColor
-                    }
-                  }
-
-                  Text {
-                    visible: parent.parent.modelData.resetCredits > 0
-                    width: parent.width
-                    text: parent.parent.modelData.resetCredits + (parent.parent.modelData.resetCredits === 1 ? " free reset" : " free resets")
-                    textFormat: Text.PlainText
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
+                source: modelData
+                accentColor: root.sourceColor(modelData.id)
               }
             }
           }
@@ -280,88 +206,34 @@ Panel {
           SectionLabel { text: "TOKEN USAGE" }
 
           Text {
-            visible: root.weekRows.length === 0
+            visible: root.usageViews.length === 0
             width: parent.width
-            text: "No daily usage buckets were returned."
+            text: "No token history sources were found."
             textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
 
-          Row {
+          Grid {
             id: usageCards
-            visible: root.weekRows.length > 0
+            visible: root.usageViews.length > 0
             width: parent.width
-            spacing: Style.space(10)
+            columns: 2
+            columnSpacing: Style.space(10)
+            rowSpacing: Style.space(10)
 
-            UsageCard {
-              width: (usageCards.width - usageCards.spacing) / 2
-              title: "THIS WEEK"
-              rows: root.weekRows
-              peak: root.weekPeak
-              rangeLabels: false
-              rowHeight: Style.space(20)
-            }
-
-            UsageCard {
-              width: (usageCards.width - usageCards.spacing) / 2
-              title: "LAST 7 WEEKS"
-              rows: root.sevenWeekRows
-              peak: root.sevenWeekPeak
-              rangeLabels: true
-              rowHeight: Style.space(20)
-            }
-          }
-
-          Column {
-            visible: root.snapshot.openCodeGo !== null
-            width: parent.width
-            spacing: Style.space(8)
-
-            SectionLabel { text: "OPENCODE GO LIMITS" }
-
-            Text {
-              visible: root.snapshot.openCodeGo && !root.snapshot.openCodeGo.available
-              width: parent.width
-              text: root.snapshot.openCodeGo ? root.snapshot.openCodeGo.error : ""
-              textFormat: Text.PlainText
-              color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            Grid {
-              id: goGrid
-              width: parent.width
-              columns: Math.min(3, Math.max(1, root.snapshot.openCodeGo ? root.snapshot.openCodeGo.limits.length : 0))
-              columnSpacing: Style.space(10)
-              rowSpacing: Style.space(10)
-
-              Repeater {
-                model: root.snapshot.openCodeGo ? root.snapshot.openCodeGo.limits : []
-                BorderSurface {
-                  required property var modelData
-                  required property int index
-                  width: (goGrid.width - goGrid.columnSpacing * (goGrid.columns - 1)) / goGrid.columns
-                  implicitHeight: goLimit.implicitHeight + Style.space(20)
-                  color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.035)
-                  radius: Style.cornerRadius
-                  borderSpec: Border.flat(root.faint, 1)
-
-                  LimitRow {
-                    id: goLimit
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: Style.space(10)
-                    anchors.rightMargin: Style.space(10)
-                    label: parent.modelData.label
-                    percent: parent.modelData.percent
-                    resetsAt: parent.modelData.resetsAt
-                  }
-                }
+            Repeater {
+              model: root.usageViews
+              UsageCard {
+                required property var modelData
+                width: (usageCards.width - usageCards.columnSpacing) / 2
+                title: modelData.title
+                rows: modelData.rows
+                peak: Model.peakTokens(modelData.rows)
+                rangeLabels: modelData.rangeLabels
+                error: modelData.error
+                rowHeight: Style.space(20)
               }
             }
           }
@@ -386,6 +258,7 @@ Panel {
     property var rows: []
     property real peak: 0
     property bool rangeLabels: false
+    property string error: ""
     property real rowHeight: Style.space(20)
 
     implicitHeight: Style.space(190)
@@ -419,13 +292,27 @@ Panel {
           id: cardTotal
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          text: Model.formatTokens(Model.totalTokens(usageCard.rows)) + " total"
+          text: usageCard.error
+            ? "—"
+            : Model.formatTokens(Model.totalTokens(usageCard.rows))
+              + (Model.hasIncomplete(usageCard.rows) ? "+" : "") + " total"
           textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
         }
+      }
+
+      Text {
+        visible: usageCard.error !== ""
+        width: parent.width
+        text: usageCard.error
+        textFormat: Text.PlainText
+        color: root.urgent
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        wrapMode: Text.WordWrap
       }
 
       Repeater {
@@ -439,6 +326,91 @@ Panel {
           peak: usageCard.peak
           rangeLabel: usageCard.rangeLabels
         }
+      }
+    }
+  }
+
+  component SubscriptionCard: BorderSurface {
+    id: subscriptionCard
+    property var source: null
+    property color accentColor: Color.accent
+
+    implicitHeight: subscriptionContent.implicitHeight + Style.space(24)
+    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.035)
+    radius: Style.cornerRadius
+    borderSpec: Border.flat(root.faint, 1)
+
+    Column {
+      id: subscriptionContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(12)
+      anchors.rightMargin: Style.space(12)
+      spacing: Style.space(6)
+
+      Item {
+        width: parent.width
+        implicitHeight: Math.max(subscriptionName.implicitHeight, subscriptionMeta.implicitHeight)
+
+        Text {
+          id: subscriptionName
+          anchors.left: parent.left
+          anchors.right: subscriptionMeta.left
+          anchors.rightMargin: Style.space(7)
+          text: subscriptionCard.source ? subscriptionCard.source.name : ""
+          textFormat: Text.PlainText
+          color: subscriptionCard.accentColor
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+          elide: Text.ElideRight
+        }
+
+        Text {
+          id: subscriptionMeta
+          anchors.right: parent.right
+          text: subscriptionCard.source ? subscriptionCard.source.meta : ""
+          textFormat: Text.PlainText
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      Text {
+        visible: subscriptionCard.source && !subscriptionCard.source.available
+        width: parent.width
+        text: subscriptionCard.source ? (subscriptionCard.source.error || "Usage unavailable") : ""
+        textFormat: Text.PlainText
+        color: root.urgent
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        wrapMode: Text.WordWrap
+      }
+
+      Repeater {
+        model: subscriptionCard.source ? subscriptionCard.source.limits : []
+        LimitRow {
+          required property var modelData
+          width: subscriptionContent.width
+          label: modelData.label
+          percent: modelData.percent
+          resetsAt: modelData.resetsAt
+          accentColor: subscriptionCard.accentColor
+        }
+      }
+
+      Text {
+        visible: subscriptionCard.source && Number(subscriptionCard.source.resetCredits || 0) > 0
+        width: parent.width
+        text: subscriptionCard.source
+          ? subscriptionCard.source.resetCredits + (subscriptionCard.source.resetCredits === 1 ? " free reset" : " free resets")
+          : ""
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
       }
     }
   }
@@ -487,7 +459,7 @@ Panel {
             required property var modelData
             width: usageRow.row.tokens > 0 ? usageStack.width * Number(modelData.tokens || 0) / usageRow.row.tokens : 0
             height: usageStack.height
-            color: root.accountColor(modelData.accountId)
+            color: root.sourceColor(modelData.accountId)
           }
         }
       }
@@ -498,10 +470,14 @@ Panel {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       width: Style.space(57)
-      text: Model.formatTokens(usageRow.row ? usageRow.row.tokens : 0)
+      text: usageRow.row && usageRow.row.incomplete
+        ? (Number(usageRow.row.tokens || 0) > 0 ? Model.formatTokens(usageRow.row.tokens) + "+" : "Pending")
+        : Model.formatTokens(usageRow.row ? usageRow.row.tokens : 0)
       textFormat: Text.PlainText
       horizontalAlignment: Text.AlignRight
-      color: root.foreground
+      color: usageRow.row && usageRow.row.incomplete && Number(usageRow.row.tokens || 0) === 0
+        ? root.dim
+        : root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       font.bold: true
@@ -556,6 +532,7 @@ Panel {
     }
 
     Text {
+      visible: String(parent.resetsAt || "") !== ""
       text: Model.resetText(parent.resetsAt, root.now)
       textFormat: Text.PlainText
       color: root.dim
